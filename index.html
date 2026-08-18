@@ -9,9 +9,9 @@
     <meta name="theme-color" content="#000000" />
     <meta name="description" content="Three.js N-Pendulum Experiment: Interactive 3D Spatial Chaos with direct joint manipulation, node property editing, Position-Based Dynamics, and Lyapunov butterfly ensemble." />
     <title>Three.js N-Pendulum Experiment</title>
-    <!-- Tailwind CSS CDN (with Rocket Loader bypass) -->
-    <script data-cfasync="false" src="https://cdn.tailwindcss.com"></script>
-    <script data-cfasync="false">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
       tailwind.config = {
         darkMode: 'class',
         theme: {
@@ -29,6 +29,6 @@
   </head>
   <body class="h-full w-full bg-black text-white antialiased overflow-hidden m-0 p-0 select-none">
     <div id="root" class="h-full w-full overflow-hidden" style="width: 100vw; height: 100vh; position: fixed; inset: 0;"></div>
-    <script data-cfasync="false" type="module" src="/src/main.jsx"></script>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
