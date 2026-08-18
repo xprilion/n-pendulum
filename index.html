@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="h-full w-full bg-black overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%23ffffff'/><circle cx='50' cy='85' r='12' fill='%2300f5ff'/><line x1='50' y1='50' x2='50' y2='85' stroke='white' stroke-width='4'/></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Three.js N-Pendulum Experiment: Interactive 3D Spatial Chaos with direct joint manipulation, node property editing, Position-Based Dynamics, and Lyapunov butterfly ensemble." />
+    <title>Three.js N-Pendulum Experiment</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              zinc: {
+                850: '#1e1e24',
+                950: '#09090b',
+              }
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="h-full w-full bg-black text-white antialiased overflow-hidden m-0 p-0 select-none">
+    <div id="root" class="h-full w-full overflow-hidden"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

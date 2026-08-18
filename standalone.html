@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Double Pendulum Chaos Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #0b0f19;
+    }
+    body {
+      background-color: var(--bg-primary);
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+    }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+    input[type="range"] {
+      accent-color: #06b6d4;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // --- Physics Engine (RK4) ---
+    function getDerivatives(state, params) {
+      const { theta1, omega1, theta2, omega2 } = state;
+      const { l1, l2, m1, m2, g, damping = 0 } = params;
+      const delta = theta1 - theta2;
+      const denCommon = 2 * m1 + m2 - m2 * Math.cos(2 * theta1 - 2 * theta2);
+
+      const num1 = -g * (2 * m1 + m2) * Math.sin(theta1)
+        - m2 * g * Math.sin(theta1 - 2 * theta2)
+        - 2 * Math.sin(delta) * m2 * (omega2 * omega2 * l2 + omega1 * omega1 * l1 * Math.cos(delta));
+      const alpha1 = (num1 / (l1 * denCommon)) - damping * omega1;
+
+      const num2 = 2 * Math.sin(delta) * (
+        omega1 * omega1 * l1 * (m1 + m2)
+        + g * (m1 + m2) * Math.cos(theta1)
+        + omega2 * omega2 * l2 * m2 * Math.cos(delta)
+      );
+      const alpha2 = (num2 / (l2 * denCommon)) - damping * omega2;
+
+      return { dTheta1: omega1, dOmega1: alpha1, dTheta2: omega2, dOmega2: alpha2 };
+    }
+
+    function rk4Step(state, params, dt) {
+      const k1 = getDerivatives(state, params);
+      const sK2 = {
+        theta1: state.theta1 + 0.5 * dt * k1.dTheta1,
+        omega1: state.omega1 + 0.5 * dt * k1.dOmega1,
+        theta2: state.theta2 + 0.5 * dt * k1.dTheta2,
+        omega2: state.omega2 + 0.5 * dt * k1.dOmega2,
+      };
+      const k2 = getDerivatives(sK2, params);
+
+      const sK3 = {
+        theta1: state.theta1 + 0.5 * dt * k2.dTheta1,
+        omega1: state.omega1 + 0.5 * dt * k2.dOmega1,
+        theta2: state.theta2 + 0.5 * dt * k2.dTheta2,
+        omega2: state.omega2 + 0.5 * dt * k2.dOmega2,
+      };
+      const k3 = getDerivatives(sK3, params);
+
+      const sK4 = {
+        theta1: state.theta1 + dt * k3.dTheta1,
+        omega1: state.omega1 + dt * k3.dOmega1,
+        theta2: state.theta2 + dt * k3.dTheta2,
+        omega2: state.omega2 + dt * k3.dOmega2,
+      };
+      const k4 = getDerivatives(sK4, params);
+
+      return {
+        theta1: state.theta1 + (dt / 6) * (k1.dTheta1 + 2 * k2.dTheta1 + 2 * k3.dTheta1 + k4.dTheta1),
+        omega1: state.omega1 + (dt / 6) * (k1.dOmega1 + 2 * k2.dOmega1 + 2 * k3.dOmega1 + k4.dOmega1),
+        theta2: state.theta2 + (dt / 6) * (k1.dTheta2 + 2 * k2.dTheta2 + 2 * k3.dTheta2 + k4.dTheta2),
+        omega2: state.omega2 + (dt / 6) * (k1.dOmega2 + 2 * k2.dOmega2 + 2 * k3.dOmega2 + k4.dOmega2),
+      };
+    }
+
+    function calculatePositions(state, params, origin = { x: 0, y: 0 }, scale = 1) {
+      const { theta1, theta2 } = state;
+      const { l1, l2 } = params;
+      const x1 = origin.x + l1 * scale * Math.sin(theta1);
+      const y1 = origin.y + l1 * scale * Math.cos(theta1);
+      const x2 = x1 + l2 * scale * Math.sin(theta2);
+      const y2 = y1 + l2 * scale * Math.cos(theta2);
+      return { x1, y1, x2, y2 };
+    }
+
+    function calculateEnergy(state, params) {
+      const { theta1, omega1, theta2, omega2 } = state;
+      const { l1, l2, m1, m2, g } = params;
+      const delta = theta1 - theta2;
+      const T = 0.5 * (m1 + m2) * l1 * l1 * omega1 * omega1 + 0.5 * m2 * l2 * l2 * omega2 * omega2 + m2 * l1 * l2 * omega1 * omega2 * Math.cos(delta);
+      const V = -(m1 + m2) * g * l1 * Math.cos(theta1) - m2 * g * l2 * Math.cos(theta2);
+      return { kinetic: T, potential: V, total: T + V };
+    }
+
+    const PRESETS = [
+      { id: 'chaos', name: 'Classic Chaos', desc: 'Orthogonal starting angles with rapid divergence', params: { l1: 1.0, l2: 1.0, m1: 1.0, m2: 1.0, g: 9.81, damping: 0 }, state: { theta1: Math.PI / 2, omega1: 0, theta2: Math.PI / 2, omega2: 0 } },
+      { id: 'inversion', name: 'Acrobatic Inversion', desc: 'Almost fully inverted near unstable equilibrium', params: { l1: 1.1, l2: 0.9, m1: 1.2, m2: 0.8, g: 9.81, damping: 0.0005 }, state: { theta1: 3.12, omega1: 0, theta2: 3.10, omega2: 0 } },
+      { id: 'harmonic', name: 'Harmonic Beats', desc: 'Small angle oscillations with regular rhythm', params: { l1: 1.0, l2: 1.0, m1: 1.0, m2: 1.0, g: 9.81, damping: 0 }, state: { theta1: 0.25, omega1: 0, theta2: 0.25, omega2: 0 } },
+      { id: 'heavy_tip', name: 'Heavy Tip Whiplash', desc: 'Heavy outer bob generating immense torque transfer', params: { l1: 1.2, l2: 0.7, m1: 0.3, m2: 2.5, g: 9.81, damping: 0 }, state: { theta1: Math.PI * 0.75, omega1: 0, theta2: 0, omega2: 0 } },
+      { id: 'lunar', name: 'Lunar Drift', desc: 'Low-gravity celestial physics', params: { l1: 1.4, l2: 1.2, m1: 1.0, m2: 1.0, g: 1.62, damping: 0.0002 }, state: { theta1: 2.5, omega1: 0, theta2: 1.8, omega2: 0 } },
+    ];
+
+    function App() {
+      const [params, setParams] = useState({ l1: 1.0, l2: 1.0, m1: 1.0, m2: 1.0, g: 9.81, damping: 0 });
+      const [initialAngles, setInitialAngles] = useState({ theta1: Math.PI / 2, theta2: Math.PI / 2 });
+      const [mainState, setMainState] = useState({ theta1: Math.PI / 2, omega1: 0, theta2: Math.PI / 2, omega2: 0 });
+      const [isPaused, setIsPaused] = useState(false);
+      const [simSpeed, setSimSpeed] = useState(1.0);
+      const [trailLength, setTrailLength] = useState(450);
+      const [trailStyle, setTrailStyle] = useState('rainbow');
+      const [isEnsemble, setIsEnsemble] = useState(false);
+      const [ensembleCount, setEnsembleCount] = useState(15);
+      const [ensembleDelta, setEnsembleDelta] = useState(0.0001);
+      const [trailHistory, setTrailHistory] = useState([]);
+      const [ensembleTrails, setEnsembleTrails] = useState([]);
+      const [energyHistory, setEnergyHistory] = useState([]);
+      const [currentEnergy, setCurrentEnergy] = useState({ kinetic: 0, potential: 0, total: 0 });
+
+      const stateRef = useRef(mainState);
+      const paramsRef = useRef(params);
+      const isPausedRef = useRef(isPaused);
+      const isEnsembleRef = useRef(isEnsemble);
+      const ensembleStatesRef = useRef([]);
+      const canvasRef = useRef(null);
+      const energyCanvasRef = useRef(null);
+
+      useEffect(() => { stateRef.current = mainState; }, [mainState]);
+      useEffect(() => { paramsRef.current = params; }, [params]);
+      useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+      useEffect(() => {
+        isEnsembleRef.current = isEnsemble;
+        if (isEnsemble) {
+          const arr = [];
+          for (let i = 0; i < ensembleCount; i++) {
+            const off = (i - Math.floor(ensembleCount / 2)) * ensembleDelta;
+            arr.push({ theta1: stateRef.current.theta1 + off * 0.5, omega1: 0, theta2: stateRef.current.theta2 + off, omega2: 0 });
+          }
+          ensembleStatesRef.current = arr;
+          setEnsembleTrails(arr.map(() => []));
+        } else {
+          ensembleStatesRef.current = [];
+          setEnsembleTrails([]);
+        }
+      }, [isEnsemble, ensembleCount, ensembleDelta]);
+
+      const resetSim = () => {
+        const fresh = { theta1: initialAngles.theta1, omega1: 0, theta2: initialAngles.theta2, omega2: 0 };
+        setMainState(fresh);
+        stateRef.current = fresh;
+        setTrailHistory([]);
+        setEnergyHistory([]);
+        if (isEnsembleRef.current) {
+          const arr = [];
+          for (let i = 0; i < ensembleCount; i++) {
+            const off = (i - Math.floor(ensembleCount / 2)) * ensembleDelta;
+            arr.push({ theta1: fresh.theta1 + off * 0.5, omega1: 0, theta2: fresh.theta2 + off, omega2: 0 });
+          }
+          ensembleStatesRef.current = arr;
+          setEnsembleTrails(arr.map(() => []));
+        }
+      };
+
+      const selectPreset = (p) => {
+        setParams({ ...p.params });
+        setInitialAngles({ theta1: p.state.theta1, theta2: p.state.theta2 });
+        setMainState({ ...p.state });
+        stateRef.current = { ...p.state };
+        setTrailHistory([]);
+        setEnergyHistory([]);
+      };
+
+      // Physics Loop
+      useEffect(() => {
+        let animId;
+        let last = performance.now();
+        let count = 0;
+
+        const loop = (now) => {
+          const delta = Math.min((now - last) / 1000, 0.05);
+          last = now;
+
+          if (!isPausedRef.current) {
+            const p = paramsRef.current;
+            const subSteps = 8;
+            const dt = (delta * simSpeed) / subSteps;
+
+            let cur = stateRef.current;
+            for (let i = 0; i < subSteps; i++) {
+              cur = rk4Step(cur, p, dt);
+            }
+            stateRef.current = cur;
+            setMainState(cur);
+
+            const pos = calculatePositions(cur, p, { x: 0, y: 0 }, 1);
+            setTrailHistory((prev) => [...prev, { x: pos.x2, y: pos.y2 }].slice(-trailLength));
+
+            if (isEnsembleRef.current) {
+              ensembleStatesRef.current = ensembleStatesRef.current.map((st) => {
+                let c = st;
+                for (let i = 0; i < subSteps; i++) c = rk4Step(c, p, dt);
+                return c;
+              });
+              setEnsembleTrails((prev) => ensembleStatesRef.current.map((st, idx) => {
+                const ep = calculatePositions(st, p, { x: 0, y: 0 }, 1);
+                return [...(prev[idx] || []), { x: ep.x2, y: ep.y2 }].slice(-250);
+              }));
+            }
+
+            count++;
+            if (count % 3 === 0) {
+              const e = calculateEnergy(cur, p);
+              setCurrentEnergy(e);
+              setEnergyHistory((prev) => [...prev, e].slice(-150));
+            }
+          }
+          animId = requestAnimationFrame(loop);
+        };
+        animId = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(animId);
+      }, [simSpeed, trailLength]);
+
+      // Canvas Rendering
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+
+        const w = rect.width;
+        const h = rect.height;
+        const ox = w / 2;
+        const oy = h * 0.38;
+        const scale = (Math.min(w, h) * 0.42) / (params.l1 + params.l2);
+
+        ctx.fillStyle = '#0b0f19';
+        ctx.fillRect(0, 0, w, h);
+
+        // Grid
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.lineWidth = 1;
+        for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+        for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+
+        // Ensemble trails
+        if (isEnsemble && ensembleTrails.length > 0) {
+          ensembleTrails.forEach((t, i) => {
+            if (t.length < 2) return;
+            const hue = (i / ensembleTrails.length) * 360;
+            ctx.strokeStyle = `hsla(${hue}, 85%, 60%, 0.4)`;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            t.forEach((pt, pIdx) => {
+              const px = ox + pt.x * scale;
+              const py = oy + pt.y * scale;
+              if (pIdx === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            });
+            ctx.stroke();
+          });
+        }
+
+        // Main trail
+        if (trailHistory.length > 1) {
+          const len = trailHistory.length;
+          for (let i = 1; i < len; i++) {
+            const p1 = trailHistory[i - 1];
+            const p2 = trailHistory[i];
+            const prog = i / len;
+            ctx.strokeStyle = trailStyle === 'rainbow' ? `hsla(${prog * 300 + 160}, 90%, 65%, ${prog * 0.8})` : `rgba(6, 182, 212, ${prog * 0.8})`;
+            ctx.lineWidth = Math.max(1, prog * 3.5);
+            ctx.beginPath();
+            ctx.moveTo(ox + p1.x * scale, oy + p1.y * scale);
+            ctx.lineTo(ox + p2.x * scale, oy + p2.y * scale);
+            ctx.stroke();
+          }
+        }
+
+        // Ensemble ghost pendulums
+        if (isEnsemble && ensembleStatesRef.current.length > 0) {
+          ensembleStatesRef.current.forEach((st, i) => {
+            const pos = calculatePositions(st, params, { x: ox, y: oy }, scale);
+            const hue = (i / ensembleStatesRef.current.length) * 360;
+            ctx.strokeStyle = `hsla(${hue}, 80%, 65%, 0.2)`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(ox, oy);
+            ctx.lineTo(pos.x1, pos.y1);
+            ctx.lineTo(pos.x2, pos.y2);
+            ctx.stroke();
+          });
+        }
+
+        // Main pendulum
+        const pos = calculatePositions(mainState, params, { x: ox, y: oy }, scale);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 3.5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ox, oy);
+        ctx.lineTo(pos.x1, pos.y1);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 3.0;
+        ctx.beginPath();
+        ctx.moveTo(pos.x1, pos.y1);
+        ctx.lineTo(pos.x2, pos.y2);
+        ctx.stroke();
+
+        // Pivot
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(ox, oy, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Bob 1
+        ctx.fillStyle = '#06b6d4';
+        ctx.shadowColor = '#06b6d4';
+        ctx.shadowBlur = 14;
+        ctx.beginPath();
+        ctx.arc(pos.x1, pos.y1, 8 + Math.sqrt(params.m1) * 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Bob 2
+        ctx.fillStyle = '#ec4899';
+        ctx.shadowColor = '#ec4899';
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.arc(pos.x2, pos.y2, 8 + Math.sqrt(params.m2) * 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }, [mainState, trailHistory, ensembleTrails, params, isEnsemble, trailStyle]);
+
+      // Energy Graph rendering
+      useEffect(() => {
+        const canvas = energyCanvasRef.current;
+        if (!canvas || energyHistory.length < 2) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, w, h);
+
+        let minE = Infinity, maxE = -Infinity;
+        energyHistory.forEach(e => {
+          minE = Math.min(minE, e.kinetic, e.potential, e.total);
+          maxE = Math.max(maxE, e.kinetic, e.potential, e.total);
+        });
+        const pad = Math.max(Math.abs(maxE - minE) * 0.15, 2);
+        const scaleY = (v) => h - 10 - ((v - (minE - pad)) / (maxE - minE + 2 * pad)) * (h - 20);
+        const stepX = w / Math.max(energyHistory.length - 1, 1);
+
+        const plot = (key, col) => {
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          energyHistory.forEach((e, idx) => {
+            const x = idx * stepX;
+            const y = scaleY(e[key]);
+            if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        };
+
+        plot('kinetic', '#06b6d4');
+        plot('potential', '#ec4899');
+        plot('total', '#fbbf24');
+      }, [energyHistory]);
+
+      return (
+        <div className="min-h-screen flex flex-col p-4 sm:p-6 max-w-[1500px] mx-auto gap-5">
+          {/* Top Bar */}
+          <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+            <div>
+              <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-cyan-400">
+                Double Pendulum Simulator (React)
+              </h1>
+              <p className="text-xs text-slate-400">High-Precision RK4 Integrator & Chaotic Butterfly Ensemble</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setIsPaused(!isPaused)} className={`px-4 py-1.5 rounded-lg text-xs font-semibold ${isPaused ? 'bg-cyan-500 text-slate-950' : 'bg-amber-500 text-slate-950'}`}>
+                {isPaused ? '▶ Play' : '⏸ Pause'}
+              </button>
+              <button onClick={resetSim} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs rounded-lg border border-slate-700">
+                🔄 Reset
+              </button>
+            </div>
+          </div>
+
+          {/* Presets */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {PRESETS.map((p) => (
+              <button key={p.id} onClick={() => selectPreset(p)} className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500 text-left transition text-xs">
+                <div className="font-semibold text-cyan-400">{p.name}</div>
+                <div className="text-[10px] text-slate-400">{p.desc}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            <div className="lg:col-span-8 flex flex-col gap-4">
+              <div className="w-full h-[520px] rounded-xl border border-slate-800 overflow-hidden bg-slate-950 shadow-2xl relative">
+                <canvas ref={canvasRef} className="w-full h-full" />
+              </div>
+
+              {/* Energy Monitor */}
+              <div className="glass-panel p-4 rounded-xl">
+                <div className="flex justify-between items-center text-xs mb-2">
+                  <span className="text-cyan-400">T (Kinetic): {currentEnergy.kinetic.toFixed(1)} J</span>
+                  <span className="text-pink-400">V (Potential): {currentEnergy.potential.toFixed(1)} J</span>
+                  <span className="text-amber-400 font-semibold">Total: {currentEnergy.total.toFixed(1)} J</span>
+                </div>
+                <canvas ref={energyCanvasRef} width={400} height={100} className="w-full h-[100px] rounded bg-slate-900" />
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="lg:col-span-4 flex flex-col gap-4 text-xs">
+              {/* Ensemble Mode */}
+              <div className="glass-panel p-4 rounded-xl border border-cyan-500/30">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-semibold text-cyan-300">Chaos Butterfly Ensemble</span>
+                  <input type="checkbox" checked={isEnsemble} onChange={(e) => setIsEnsemble(e.target.checked)} className="cursor-pointer" />
+                </div>
+                <p className="text-[11px] text-slate-400 mb-2">Simulate {ensembleCount} pendulums with 10⁻⁴ rad difference to see chaotic divergence!</p>
+                {isEnsemble && (
+                  <div className="space-y-2">
+                    <div>
+                      <div className="flex justify-between"><span>Count:</span><span className="font-mono text-cyan-400">{ensembleCount}</span></div>
+                      <input type="range" min="3" max="30" value={ensembleCount} onChange={(e) => setEnsembleCount(parseInt(e.target.value))} className="w-full" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Physics Sliders */}
+              <div className="glass-panel p-4 rounded-xl space-y-3">
+                <div className="font-semibold text-slate-200 border-b border-slate-800 pb-1">Parameters</div>
+                <div>
+                  <div className="flex justify-between"><span>Length 1 (l₁):</span><span className="font-mono text-cyan-400">{params.l1} m</span></div>
+                  <input type="range" min="0.4" max="2.0" step="0.1" value={params.l1} onChange={(e) => setParams({ ...params, l1: parseFloat(e.target.value) })} className="w-full" />
+                </div>
+                <div>
+                  <div className="flex justify-between"><span>Length 2 (l₂):</span><span className="font-mono text-pink-400">{params.l2} m</span></div>
+                  <input type="range" min="0.4" max="2.0" step="0.1" value={params.l2} onChange={(e) => setParams({ ...params, l2: parseFloat(e.target.value) })} className="w-full" />
+                </div>
+                <div>
+                  <div className="flex justify-between"><span>Mass 1 (m₁):</span><span className="font-mono text-cyan-400">{params.m1} kg</span></div>
+                  <input type="range" min="0.2" max="3.0" step="0.1" value={params.m1} onChange={(e) => setParams({ ...params, m1: parseFloat(e.target.value) })} className="w-full" />
+                </div>
+                <div>
+                  <div className="flex justify-between"><span>Mass 2 (m₂):</span><span className="font-mono text-pink-400">{params.m2} kg</span></div>
+                  <input type="range" min="0.2" max="3.0" step="0.1" value={params.m2} onChange={(e) => setParams({ ...params, m2: parseFloat(e.target.value) })} className="w-full" />
+                </div>
+                <div>
+                  <div className="flex justify-between"><span>Gravity (g):</span><span className="font-mono text-amber-400">{params.g} m/s²</span></div>
+                  <input type="range" min="0" max="25" step="0.5" value={params.g} onChange={(e) => setParams({ ...params, g: parseFloat(e.target.value) })} className="w-full" />
+                </div>
+                <div>
+                  <div className="flex justify-between"><span>Damping:</span><span className="font-mono">{params.damping}</span></div>
+                  <input type="range" min="0" max="0.01" step="0.0005" value={params.damping} onChange={(e) => setParams({ ...params, damping: parseFloat(e.target.value) })} className="w-full" />
+                </div>
+              </div>
+
+              {/* Speed & Trail */}
+              <div className="glass-panel p-4 rounded-xl space-y-3">
+                <div className="font-semibold text-slate-200 border-b border-slate-800 pb-1">Visuals</div>
+                <div>
+                  <div className="flex justify-between"><span>Speed:</span><span className="font-mono text-purple-400">{simSpeed}x</span></div>
+                  <input type="range" min="0.2" max="2.5" step="0.1" value={simSpeed} onChange={(e) => setSimSpeed(parseFloat(e.target.value))} className="w-full" />
+                </div>
+                <div>
+                  <div className="flex justify-between"><span>Trail Length:</span><span className="font-mono">{trailLength}</span></div>
+                  <input type="range" min="50" max="1000" step="50" value={trailLength} onChange={(e) => setTrailLength(parseInt(e.target.value))} className="w-full" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
