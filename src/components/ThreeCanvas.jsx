@@ -62,15 +62,18 @@ export default function ThreeCanvas({
     const mount = mountRef.current;
     if (!mount) return;
 
+    // Determine initial dimensions safely
+    const initialWidth = mount.clientWidth || window.innerWidth || 800;
+    const initialHeight = mount.clientHeight || window.innerHeight || 600;
+    const aspect = initialWidth / Math.max(initialHeight, 1);
+
     // Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
     sceneRef.current = scene;
 
     // Camera
-    const width = mount.clientWidth;
-    const height = mount.clientHeight;
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 100);
     camera.position.set(0, 0.8, 5.2);
     cameraRef.current = camera;
 
@@ -81,9 +84,14 @@ export default function ThreeCanvas({
       powerPreference: 'high-performance',
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(width, height);
+    renderer.setSize(initialWidth, initialHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
+    
+    // Clear any previous elements in mount
+    while (mount.firstChild) {
+      mount.removeChild(mount.firstChild);
+    }
     mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -100,14 +108,14 @@ export default function ThreeCanvas({
     controlsRef.current = controls;
 
     // Studio Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
     keyLight.position.set(6, 10, 6);
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.9);
     fillLight.position.set(-6, -3, -5);
     scene.add(fillLight);
 
@@ -118,13 +126,14 @@ export default function ThreeCanvas({
     gridHelperRef.current = grid;
 
     // Fixed Pivot Mount at (0, 0, 0)
-    const pivotGeo = new THREE.SphereGeometry(0.055, 32, 32);
+    const pivotGeo = new THREE.SphereGeometry(0.06, 32, 32);
     const pivotMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.15,
       metalness: 0.9,
     });
     const pivotMesh = new THREE.Mesh(pivotGeo, pivotMat);
+    pivotMesh.position.set(0, 0, 0);
     scene.add(pivotMesh);
 
     // Add main links and ensemble groups
@@ -137,7 +146,6 @@ export default function ThreeCanvas({
       color: 0x00f5ff,
       transparent: true,
       opacity: 0.9,
-      wireframe: false,
     });
     const selRingMesh = new THREE.Mesh(selRingGeo, selRingMat);
     selRingMesh.rotation.x = Math.PI / 2;
@@ -179,8 +187,8 @@ export default function ThreeCanvas({
       const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
       const clientY = e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
       return {
-        normX: ((clientX - rect.left) / rect.width) * 2 - 1,
-        normY: -((clientY - rect.top) / rect.height) * 2 + 1,
+        normX: rect.width > 0 ? ((clientX - rect.left) / rect.width) * 2 - 1 : 0,
+        normY: rect.height > 0 ? -((clientY - rect.top) / rect.height) * 2 + 1 : 0,
         screenX: clientX,
         screenY: clientY,
       };
@@ -313,10 +321,26 @@ export default function ThreeCanvas({
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 
+    // Auto resize function
+    const resizeRendererToDisplaySize = () => {
+      if (!mount || !renderer || !camera) return;
+      const w = mount.clientWidth || window.innerWidth;
+      const h = mount.clientHeight || window.innerHeight;
+      if (w > 0 && h > 0) {
+        const needResize = renderer.domElement.width !== w || renderer.domElement.height !== h;
+        if (needResize || Number.isNaN(camera.aspect)) {
+          camera.aspect = w / h;
+          camera.updateProjectionMatrix();
+          renderer.setSize(w, h);
+        }
+      }
+    };
+
     // Animation Loop
     let animId;
     const animate = () => {
       animId = requestAnimationFrame(animate);
+      resizeRendererToDisplaySize();
       controls.update();
 
       // Pulse selection indicator
@@ -330,24 +354,14 @@ export default function ThreeCanvas({
     };
     animate();
 
-    // Resize Observer
-    const handleResize = () => {
-      if (!mount || !renderer || !camera) return;
-      const w = mount.clientWidth;
-      const h = mount.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
-
-    const resizeObserver = new ResizeObserver(handleResize);
+    const resizeObserver = new ResizeObserver(() => resizeRendererToDisplaySize());
     resizeObserver.observe(mount);
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', resizeRendererToDisplaySize);
 
     return () => {
       cancelAnimationFrame(animId);
       resizeObserver.disconnect();
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', resizeRendererToDisplaySize);
       dom.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
@@ -366,7 +380,7 @@ export default function ThreeCanvas({
     }
   }, [showGrid]);
 
-  // Helper to position cylinder between two 3D points
+  // Safe vector direction for cylinders
   const updateCylinder = (mesh, p1, p2, radius = 0.014) => {
     const dir = new THREE.Vector3().subVectors(p2, p1);
     const len = dir.length();
@@ -374,18 +388,27 @@ export default function ThreeCanvas({
 
     mesh.scale.set(radius / 0.014, len, radius / 0.014);
     mesh.position.copy(p1).addScaledVector(dir, 0.5);
-    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+
+    const normDir = dir.clone().normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+
+    // Guard against antiparallel vectors
+    if (normDir.dot(up) < -0.9999) {
+      mesh.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+    } else {
+      mesh.quaternion.setFromUnitVectors(up, normDir);
+    }
   };
 
   // Re-sync and render N-links on physics tick
   useEffect(() => {
     if (!sceneRef.current || !nState || !nState.positions) return;
 
-    const { numLinks, masses = [], lengths = [], colors = [], pinned = [], positions = [] } = nState;
+    const { numLinks = 2, masses = [], lengths = [], colors = [], pinned = [], positions = [] } = nState;
     const group = mainLinksGroupRef.current;
 
     // Ensure group has enough rod & bob meshes for numLinks
-    const requiredMeshes = numLinks * 2; // rod + bob for each link
+    const requiredMeshes = numLinks * 2;
     while (group.children.length < requiredMeshes) {
       const idx = Math.floor(group.children.length / 2) + 1;
 
@@ -440,10 +463,10 @@ export default function ThreeCanvas({
         bobMesh.position.copy(pCurr);
 
         // Custom bob color & pinned styling
-        const hexColor = colors[i - 1] || '#ffffff';
+        const hexColor = (colors && colors[i - 1]) || '#ffffff';
         if (bobMesh.material) {
           bobMesh.material.color.set(hexColor);
-          if (pinned[i]) {
+          if (pinned && pinned[i]) {
             bobMesh.material.emissive.set(0xffaa00);
             bobMesh.material.emissiveIntensity = 0.4;
           } else {
@@ -552,11 +575,18 @@ export default function ThreeCanvas({
   }, [nState, ensembleStates, trailHistory, ensembleTrails, isEnsemble, trailFade, selectedNodeIndex]);
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-black select-none">
-      <div ref={mountRef} className="w-full h-full touch-none" />
+    <div
+      className="w-full h-full overflow-hidden bg-black select-none"
+      style={{ position: 'absolute', inset: 0, width: '100vw', height: '100vh' }}
+    >
+      <div
+        ref={mountRef}
+        className="w-full h-full touch-none"
+        style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
+      />
 
       {/* Interaction Hint Badges */}
-      <div className="absolute bottom-4 left-4 pointer-events-none hidden sm:flex items-center gap-2 text-[11px] font-mono mono-glass px-3 py-1.5 rounded-full text-zinc-400 border border-zinc-800">
+      <div className="absolute bottom-4 left-4 pointer-events-none hidden sm:flex items-center gap-2 text-[11px] font-mono mono-glass px-3 py-1.5 rounded-full text-zinc-400 border border-zinc-800 z-30">
         <span className={`w-1.5 h-1.5 rounded-full ${isPaused ? 'bg-amber-400' : 'bg-cyan-400 animate-ping'}`} />
         <span>
           {isPaused

@@ -732,7 +732,7 @@ export default function App() {
       />
 
       {/* Main 3D Three.js Viewport (Full Screen No-Scroll) */}
-      <div className="w-full h-full">
+      <div className="absolute inset-0 w-full h-full overflow-hidden">
         <ThreeCanvas
           nState={nState}
           ensembleStates={ensembleStatesRef.current}
